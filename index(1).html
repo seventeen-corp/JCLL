@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Control de Servicios JCLL</title>
+  <style>
+    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: #f0f2f5; padding: 20px; margin: 0; display: flex; justify-content: center; }
+    .card { background: #ffffff; padding: 24px; border-radius: 12px; width: 100%; max-width: 480px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+    h2 { margin-top: 0; color: #1a1a1a; font-size: 20px; text-align: center; }
+    .service-row { background: #f8fafc; border: 1px solid #e2e8f0; padding: 12px; border-radius: 8px; margin-bottom: 12px; position: relative; }
+    label { font-weight: 600; font-size: 13px; color: #444; display: block; margin-top: 8px; margin-bottom: 2px; }
+    input[type="text"], input[type="number"] { width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; outline: none; }
+    input[type="text"]:focus, input[type="number"]:focus { border-color: #0066cc; }
+    .row-flex { display: flex; gap: 8px; align-items: center; }
+    .row-flex > div { flex: 1; }
+    .checkbox-container { display: flex; align-items: center; margin-top: 10px; gap: 6px; cursor: pointer; }
+    .checkbox-container input { width: 16px; height: 16px; cursor: pointer; }
+    .btn-del { background: #e53e3e; color: white; border: none; padding: 6px 10px; font-size: 12px; border-radius: 4px; cursor: pointer; position: absolute; top: 10px; right: 10px; }
+    .btn-add { background: #319795; color: white; border: none; padding: 10px; font-size: 14px; font-weight: bold; border-radius: 6px; width: 100%; cursor: pointer; margin-top: 5px; }
+    .btn-main { width: 100%; background-color: #0066cc; color: white; border: none; padding: 12px; font-size: 16px; font-weight: bold; border-radius: 6px; margin-top: 15px; cursor: pointer; }
+    .btn-main:active { background-color: #004b99; }
+    .total-box { background: #edf2f7; padding: 10px; border-radius: 6px; margin-top: 15px; font-size: 16px; font-weight: bold; text-align: right; color: #2d3748; }
+    #status { margin-top: 12px; text-align: center; font-weight: 600; font-size: 14px; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+
+  <div class="card">
+    <h2>Registro de Servicios JCLL</h2>
+    
+    <div id="services-container">
+      <!-- Los campos de relleno se generan de inmediato al cargar -->
+    </div>
+
+    <button type="button" class="btn-add" onclick="agregarServicio()">+ Añadir otro traslado</button>
+
+    <div class="total-box">
+      Total General: <span id="lbl-total-general">$0.00</span>
+    </div>
+
+    <button type="button" class="btn-main" onclick="guardarYEnviarCorreo()">Guardar y Enviar Correo</button>
+    <div id="status"></div>
+  </div>
+
+  <script>
+    const NPOINT_URL = "https://api.npoint.io/498671cdb0588276f572";
+
+    // Generar el primer servicio de forma inmediata
+    agregarServicio();
+
+    function agregarServicio() {
+      const container = document.getElementById('services-container');
+      const index = container.children.length + 1;
+      
+      const div = document.createElement('div');
+      div.className = 'service-row';
+      div.innerHTML = `
+        <span style="font-size:12px; font-weight:bold; color:#718096;">Traslado #${index}</span>
+        ${index > 1 ? '<button type="button" class="btn-del" onclick="eliminarServicio(this)">X</button>' : ''}
+        
+        <div class="row-flex">
+          <div>
+            <label>Chofer</label>
+            <input type="text" class="inp-chofer" placeholder="Nombre del chofer">
+          </div>
+          <div>
+            <label>Pasajero</label>
+            <input type="text" class="inp-pasajero" placeholder="Pasajero" oninput="calcularTotalGeneral()">
+          </div>
+        </div>
+
+        <div class="row-flex">
+          <div>
+            <label>Origen</label>
+            <input type="text" class="inp-origen" placeholder="Origen">
+          </div>
+          <div>
+            <label>Destino</label>
+            <input type="text" class="inp-destino" placeholder="Destino">
+          </div>
+        </div>
+
+        <div class="row-flex">
+          <div>
+            <label>Subtotal (ej. 20+15)</label>
+            <input type="text" class="inp-subtotal" placeholder="0.00" oninput="calcularTotalGeneral()">
+          </div>
+          <div>
+            <label>Espera ($)</label>
+            <input type="text" class="inp-espera" placeholder="0.00" oninput="calcularTotalGeneral()">
+          </div>
+        </div>
+
+        <div class="checkbox-container">
+          <input type="checkbox" class="chk-nocturno" onchange="calcularTotalGeneral()">
+          <label style="margin:0;">Recargo Nocturno (+20% al subtotal)</label>
+        </div>
+      `;
+      container.appendChild(div);
+      actualizarEtiquetasTraslados();
+      calcularTotalGeneral();
+    }
+
+    function eliminarServicio(btn) {
+      btn.parentElement.remove();
+      actualizarEtiquetasTraslados();
+      calcularTotalGeneral();
+    }
+
+    function actualizarEtiquetasTraslados() {
+      const rows = document.querySelectorAll('.service-row');
+      rows.forEach((row, idx) => {
+        const span = row.querySelector('span');
+        span.innerText = `Traslado #${idx + 1}`;
+      });
+    }
+
+    // Evaluar sumas escritas en texto como "20+15+3"
+    function evaluarSubtotal(str) {
+      if (!str) return 0;
+      try {
+        const limpio = str.replace(/[^0-9+\.]/g, '');
+        const parts = limpio.split('+');
+        let suma = 0;
+        parts.forEach(p => {
+          let val = parseFloat(p);
+          if (!isNaN(val)) suma += val;
+        });
+        return suma;
+      } catch (e) {
+        return parseFloat(str) || 0;
+      }
+    }
+
+    function calcularTotalGeneral() {
+      const rows = document.querySelectorAll('.service-row');
+      let totalGeneral = 0;
+
+      rows.forEach(row => {
+        const subStr = row.querySelector('.inp-subtotal').value;
+        const sub = evaluarSubtotal(subStr);
+        const espStr = row.querySelector('.inp-espera').value;
+        const espera = evaluarSubtotal(espStr);
+        const nocturno = row.querySelector('.chk-nocturno').checked;
+        
+        const totalFila = (nocturno ? sub * 1.20 : sub) + espera;
+        totalGeneral += totalFila;
+      });
+
+      document.getElementById('lbl-total-general').innerText = '$' + totalGeneral.toFixed(2);
+    }
+
+    async function guardarYEnviarCorreo() {
+      const rows = document.querySelectorAll('.service-row');
+      const statusDiv = document.getElementById('status');
+      
+      if (rows.length === 0) {
+        statusDiv.style.color = "red";
+        statusDiv.innerText = "Añade al menos un servicio.";
+        return;
+      }
+
+      statusDiv.style.color = "#555";
+      statusDiv.innerText = "Guardando y preparando Excel...";
+
+      const fecha = new Date().toLocaleString();
+      let nuevosRegistros = [];
+      let resumenTexto = "";
+      let granTotalCalculado = 0;
+
+      rows.forEach((row, index) => {
+        const chofer = row.querySelector('.inp-chofer').value.trim() || "-";
+        const pasajero = row.querySelector('.inp-pasajero').value.trim() || "Sin nombre";
+        const origen = row.querySelector('.inp-origen').value.trim() || "-";
+        const destino = row.querySelector('.inp-destino').value.trim() || "-";
+        
+        const subStr = row.querySelector('.inp-subtotal').value;
+        const subtotal = evaluarSubtotal(subStr);
+        
+        const espStr = row.querySelector('.inp-espera').value;
+        const espera = evaluarSubtotal(espStr);
+
+        const nocturno = row.querySelector('.chk-nocturno').checked;
+        const nocturnoTexto = nocturno ? "Sí (+20%)" : "No";
+
+        const total = (nocturno ? subtotal * 1.20 : subtotal) + espera;
+        granTotalCalculado += total;
+
+        nuevosRegistros.push({
+          fecha,
+          chofer,
+          pasajero,
+          origen,
+          destino,
+          subtotal: subtotal.toFixed(2),
+          espera: espera.toFixed(2),
+          nocturno: nocturnoTexto,
+          total: total.toFixed(2)
+        });
+
+        resumenTexto += `• Traslado #${index+1}: Chofer: ${chofer} | Pasajero: ${pasajero} (${origen} -> ${destino}) | Sub: $${subtotal.toFixed(2)} | Espera: $${espera.toFixed(2)} | Noct: ${nocturnoTexto} | Total: $${total.toFixed(2)}\n`;
+      });
+
+      try {
+        // 1. Guardar en npoint.io
+        let response = await fetch(NPOINT_URL);
+        let data = await response.json();
+        if (!Array.isArray(data)) data = [];
+
+        nuevosRegistros.forEach(item => data.push(item));
+
+        await fetch(NPOINT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        });
+
+        // 2. Generar Excel local acumulado
+        const ws_data = [
+          ["Fecha y Hora", "Chofer", "Pasajero", "Origen", "Destino", "Subtotal ($)", "Espera ($)", "Nocturno", "Total ($)"]
+        ];
+        data.forEach(item => {
+          ws_data.push([
+            item.fecha,
+            item.chofer || "-",
+            item.pasajero,
+            item.origen,
+            item.destino,
+            parseFloat(item.subtotal || 0),
+            parseFloat(item.espera || 0),
+            item.nocturno,
+            parseFloat(item.total || 0)
+          ]);
+        });
+
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.aoa_to_sheet(ws_data);
+        XLSX.utils.book_append_sheet(wb, ws, "Control de Servicios");
+        
+        XLSX.writeFile(wb, "Reporte_Servicios_JCLL.xlsx");
+
+        // 3. Abrir correo redactado
+        const destinatario = "serviciosjcllca@gmail.com";
+        const asunto = encodeURIComponent("Reporte de Servicios Multiple - " + fecha);
+        const cuerpo = encodeURIComponent(
+          "Se han registrado los siguientes servicios:\n\n" +
+          resumenTexto + "\n" +
+          "TOTAL GENERAL: $" + granTotalCalculado.toFixed(2) + "\n\n" +
+          "(Nota: El archivo Excel 'Reporte_Servicios_JCLL.xlsx' actualizado se ha descargado en tu dispositivo, adjúntalo aquí)."
+        );
+
+        statusDiv.style.color = "green";
+        statusDiv.innerText = "¡Guardado! Abriendo correo...";
+
+        window.location.href = `mailto:${destinatario}?subject=${asunto}&body=${cuerpo}`;
+
+      } catch (error) {
+        statusDiv.style.color = "red";
+        statusDiv.innerText = "Error al procesar los registros.";
+        console.error(error);
+      }
+    }
+  </script>
+
+</body>
+</html>
